@@ -1,43 +1,55 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+# ===========================
+# GLOBAL / SECRETS (Crucial)
+# ===========================
+.DS_Store
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.log
 
-# dependencies
+# Block Google/Firebase Keys (Based on your project)
+service-account-key.json
+google-credentials.json
+firebase-config.js
+
+# ===========================
+# CLIENT (React Native / Expo)
+# ===========================
 node_modules/
-
-# Expo
 .expo/
 dist/
 web-build/
 expo-env.d.ts
 
-# Native
-.kotlin/
-*.orig.*
-*.jks
-*.p8
-*.p12
-*.key
-*.mobileprovision
+# Native - Path corrected for your "client" folder
+client/ios/
+client/android/
 
 # Metro
 .metro-health-check*
 
-# debug
+# Debug
 npm-debug.*
 yarn-debug.*
 yarn-error.*
 
-# macOS
-.DS_Store
-*.pem
-
-# local env files
-.env*.local
-
-# typescript
+# TypeScript
 *.tsbuildinfo
-
 app-example
 
-# generated native folders
-/ios
-/android
+# ===========================
+# SERVER (Python / Flask)
+# ===========================
+# Python cache (Junk files)
+__pycache__/
+*.pyc
+
+# Virtual Environment (Very important to ignore)
+venv/
+env/
+.venv/
+
+# User Uploads (Invoices)
+server/uploads/

@@ -41,3 +41,11 @@ app-example
 # generated native folders
 /ios
 /android
+
+# server secrets & runtime files
+credentials.json
+server/credentials.json
+server/.env
+server/.venv/
+__pycache__/
+uploads/

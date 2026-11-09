@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "430558994471",
+    "project_id": "smart-bill-474414",
+    "storage_bucket": "smart-bill-474414.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:430558994471:android:35b09c98b7bdf80d686e02",
+        "android_client_info": {
+          "package_name": "com.sujal.smartbillapp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "430558994471-mbcjhvf5fshhrrbl9mc4poalimipifc3.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.sujal.smartbillapp",
+            "certificate_hash": "71ddd066537c5617000227cad5924b12f5c93428"
+          }
+        },
+        {
+          "client_id": "430558994471-nimt6lj5o4ajjh5sd83hrbha08bb1g6a.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC-Ngb-NvxsGlvwZ4_gaYd9FF2awUT9B64"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "430558994471-nimt6lj5o4ajjh5sd83hrbha08bb1g6a.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "430558994471-7k2a2240k55nrna1ias4q48v5sol4ji8.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.sujal.smartbill"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

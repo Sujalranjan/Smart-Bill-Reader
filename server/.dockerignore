@@ -1,0 +1,8 @@
+credentials.json
+*.json
+tests/
+.env*
+.venv/
+__pycache__/
+scripts/
+uploads/

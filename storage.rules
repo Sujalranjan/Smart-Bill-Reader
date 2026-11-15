@@ -1,0 +1,12 @@
+rules_version = '2';
+
+// Bill files are uploaded and read only by the SmartBill server. The app receives
+// short-lived signed links from the server, which do not depend on these rules.
+// Every direct client request is denied.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

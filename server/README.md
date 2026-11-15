@@ -9,12 +9,14 @@ A Flask API that the mobile app calls. It:
 
 ### Bill workflow
 
-1. **Scan.** The app uploads a bill. The server extracts it, converts amounts to numbers and dates to `YYYY-MM-DD`, validates it, and saves it with status `draft`.
+1. **Scan.** The app uploads a bill. The server extracts it, converts amounts to numbers and dates to `YYYY-MM-DD`, validates it, and checks the supplier against the vendor list.
+   - **Standard invoices are approved automatically:** no issues at all, a supplier already in the vendor list, and every field read with at least 90% confidence. No manual step.
+   - Everything else is saved as `draft` for review. The first bill from a new supplier always goes to review.
 2. **Review.** The app shows the extracted data together with a list of *issues*:
-   - **Errors** block approval: missing invoice number, date, supplier or total; unreadable date or total; a duplicate invoice (same number from the same supplier).
-   - **Warnings** are shown, but the user can still approve: totals that don't add up, line quantity × rate ≠ amount, invalid GSTIN check digit, future or very old dates, and low OCR confidence (below 70%).
+   - **Errors** block approval: missing invoice number, date, supplier or total; unreadable date or total; a duplicate invoice (same number from the same supplier); a supplier blocked in the vendor list.
+   - **Warnings** are shown, but the user can still approve: totals that don't add up, line quantity × rate ≠ amount, invalid GSTIN check digit, future or very old dates, low OCR confidence (below 70%), a new supplier, and a supplier whose name or GSTIN differs from the vendor list.
 3. **Correct.** The user edits fields. Editing an approved bill sends it back to `draft`, and every edit is recorded in the bill's `audit` list.
-4. **Approve.** The bill is approved once no errors remain.
+4. **Approve.** The bill is approved once no errors remain. Approving adds the supplier to the vendor list, or updates it.
 5. **Export.** CSV and JSON exports have one row per line item and are meant for import into accounting software. The Excel export has summary sheets plus a sheet per supplier.
 
 | Endpoint | Purpose |
@@ -25,13 +27,18 @@ A Flask API that the mobile app calls. It:
 | `PUT /bills/<id>` | save corrections: `{"header": {...}, "totals": {...}, "line_items": [...]}` |
 | `POST /bills/<id>/approve` | approve; `409` with the issues if errors remain |
 | `DELETE /bills/<id>` | delete the bill and its file |
+| `GET /vendors`, `POST /vendors` | list the vendor master, add a supplier by hand |
+| `PUT /vendors/<id>`, `DELETE /vendors/<id>` | edit or block a supplier, remove it from the list |
+| `GET /reports/quality` | share auto-approved, share needing review and why, correction rate, most-corrected fields, processing time |
 | `GET /export?format=xlsx\|csv\|json&status=all\|approved&from=YYYY-MM-DD&to=YYYY-MM-DD` | export |
 | `GET /healthz` | health check |
 | `GET /get-history`, `GET /export-bills` | kept for app builds released before the review workflow |
 
 Bills saved by the first server version (flat OCR strings) are converted when they're read. They're stored in the new format the first time they are edited or approved.
 
-Code layout: `app.py` (routes), `extraction.py` (Document AI → plain data), `normalize.py` (numbers, dates, GSTIN, schema), `validation.py` (checks), `preprocess.py` (file type, rotation, multi-page), `exporters.py`, `services.py` (Google Cloud clients).
+Code layout: `app.py` (routes), `extraction.py` (Document AI → plain data), `normalize.py` (numbers, dates, GSTIN, schema), `validation.py` (checks), `vendors.py` (vendor master matching), `preprocess.py` (file type, rotation, multi-page), `exporters.py`, `reports.py` (quality numbers), `evaluation.py` + `tools/evaluate.py` (accuracy testing), `services.py` (Google Cloud clients).
+
+Settings (environment variables, see `.env.example`): `AUTO_APPROVE` (default `true`) and `AUTO_APPROVE_MIN_CONFIDENCE` (default `0.9`) control automatic approval.
 
 ## Tests
 
@@ -40,6 +47,32 @@ The tests use in-memory fakes for Firestore, Storage, Auth and Document AI, so t
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest tests
+```
+
+## Accuracy testing
+
+This measures extraction against hand-checked values and writes the Phase 2 test report: per-field accuracy, precision and recall, share of bills needing review, processing time, and a list of failure cases.
+
+1. Create a sheet for a folder of bills, then fill it in (Excel works). Leave a cell empty to skip a field; write `NONE` if the bill doesn't show it.
+
+   ```bash
+   python tools/evaluate.py template --bills ../../data/ml-split/test --out ../../data/ground-truth/ground_truth.csv
+   ```
+
+2. Run it. The report is written next to the sheet as `accuracy_report.md`.
+
+   ```bash
+   python tools/evaluate.py run --truth ../../data/ground-truth/ground_truth.csv --bills ../../data/ml-split/test
+   ```
+
+Each bill is sent to Document AI once and the response is cached in `docai-cache/` next to the sheet, so re-runs cost nothing. Add `--offline` to forbid any Document AI call. Targets default to 95% header accuracy and at most 10% of bills needing review (`--header-target`, `--exception-target`).
+
+## Database and storage rules
+
+`../firestore.rules` and `../storage.rules` deny all direct access from client apps. Only this server (Admin SDK) reads and writes data. Deploy them once from the `SmartBillApp/` folder:
+
+```bash
+firebase deploy --only firestore:rules,storage --project smart-bill-474414
 ```
 
 ## Run locally (development)

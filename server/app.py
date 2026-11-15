@@ -8,6 +8,7 @@ Local development: `python app.py`. Production: gunicorn on Cloud Run (see Docke
 import io
 import logging
 import os
+import time
 import uuid
 from datetime import date, datetime, timezone
 
@@ -15,7 +16,9 @@ from flask import Flask, jsonify, request, send_file
 from werkzeug.exceptions import HTTPException
 
 import exporters
+import reports
 import services
+import vendors
 from extraction import extract_document
 from normalize import (SCHEMA_VERSION, InvalidValue, apply_edits, bill_from_extraction,
                        bill_from_legacy, duplicate_key, is_iso_date)
@@ -28,6 +31,9 @@ log = logging.getLogger("smartbill")
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "25"))
 APP_IMAGE_LINK_HOURS = int(os.environ.get("APP_IMAGE_LINK_HOURS", "1"))
 EXPORT_IMAGE_LINK_HOURS = 24 * 7  # 7 days is the maximum for V4 signed URLs
+# Standard invoices (no issues, known supplier, confident OCR) are approved without manual review.
+AUTO_APPROVE = os.environ.get("AUTO_APPROVE", "true").lower() in ("1", "true", "yes")
+AUTO_APPROVE_MIN_CONFIDENCE = float(os.environ.get("AUTO_APPROVE_MIN_CONFIDENCE", "0.9"))
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
@@ -58,6 +64,41 @@ def get_user_id_from_token(req):
 
 def _bills(uid):
     return services.db().collection("users").document(uid).collection("bills")
+
+
+def _vendors(uid):
+    return services.db().collection("users").document(uid).collection("vendors")
+
+
+def lookup_vendor(uid, header):
+    """Compare the bill's supplier with the user's vendor master list."""
+    from google.cloud.firestore_v1.base_query import FieldFilter
+    vid = vendors.vendor_id(header)
+    by_id = None
+    if vid:
+        snap = _vendors(uid).document(vid).get()
+        by_id = dict(snap.to_dict(), id=snap.id) if snap.exists else None
+    by_name = []
+    key = vendors.name_key(header.get("supplier_name"))
+    if by_id is None and key:
+        by_name = [dict(m.to_dict(), id=m.id)
+                   for m in _vendors(uid).where(filter=FieldFilter("name_key", "==", key)).stream()]
+    return vendors.match_vendor(header, by_id, by_name)
+
+
+def record_vendor(uid, bill):
+    """Add or update the supplier in the vendor master list when a bill is approved."""
+    match = lookup_vendor(uid, bill["header"])
+    if match["status"] == "unknown":
+        return
+    existing = match["vendor"]
+    if existing:
+        vid = existing["id"]
+        data = vendors.record_bill({k: v for k, v in existing.items() if k != "id"}, bill["header"], bill["id"], _now())
+    else:
+        vid = vendors.vendor_id(bill["header"])
+        data = vendors.vendor_from_bill(bill["header"], bill["id"], _now())
+    _vendors(uid).document(vid).set(data)
 
 
 def _jsonable(value):
@@ -102,8 +143,17 @@ def find_duplicates(uid, key, exclude_id=None):
 
 def revalidate(uid, bill, exclude_id=None):
     bill["dup_key"] = duplicate_key(bill["header"])
-    bill["issues"] = validate(bill, find_duplicates(uid, bill["dup_key"], exclude_id))
+    match = lookup_vendor(uid, bill["header"])
+    bill["vendor_status"] = match["status"]
+    bill["issues"] = validate(bill, find_duplicates(uid, bill["dup_key"], exclude_id), vendor_match=match)
     bill.update(summarize(bill["issues"]))
+
+
+def can_auto_approve(bill):
+    if not AUTO_APPROVE or bill["issue_count"] or bill.get("vendor_status") != "match":
+        return False
+    confidences = list((bill.get("confidence") or {}).values())
+    return bool(confidences) and min(confidences) >= AUTO_APPROVE_MIN_CONFIDENCE
 
 
 def summary(bill, with_image=True):
@@ -120,6 +170,7 @@ def summary(bill, with_image=True):
         "issue_count": bill.get("issue_count", 0),
         "error_count": bill.get("error_count", 0),
         "mime_type": bill.get("mime_type"),
+        "auto_approved": bool((bill.get("metrics") or {}).get("auto_approved")) and bill.get("status") == "approved",
         "image": services.signed_url(bill.get("image_path"), APP_IMAGE_LINK_HOURS) if with_image and is_image else "",
         "scanned_at": bill.get("timestamp"),
     }
@@ -187,7 +238,10 @@ def scan_bill():
     file_name = names[0] if len(names) == 1 else f"{len(uploads)}-page scan.pdf"
     log.info("Processing %s (%s, %d bytes) for user %s", file_name, mime_type, len(content), uid)
 
-    extracted = extract_document(services.process_document(content, mime_type))
+    started = time.perf_counter()
+    document = services.process_document(content, mime_type)
+    ocr_ms = round((time.perf_counter() - started) * 1000)
+    extracted = extract_document(document)
     bill = bill_from_extraction(extracted)
 
     found = sum(1 for v in (bill["totals"]["total_amount"], bill["header"]["supplier_name"],
@@ -209,15 +263,34 @@ def scan_bill():
     })
     revalidate(uid, bill)
 
+    auto = can_auto_approve(bill)
+    if auto:
+        bill["status"] = "approved"
+        bill["approved_at"] = _now()
+        bill["audit"].append({"action": "auto_approved", "at": _now(), "by": "system"})
+    bill["metrics"] = {
+        "ocr_ms": ocr_ms,
+        "total_ms": round((time.perf_counter() - started) * 1000),
+        "pages": bill["page_count"],
+        "initial_issue_codes": sorted({i["code"] for i in bill["issues"]}),
+        "initial_error_count": bill["error_count"],
+        "auto_approved": auto,
+    }
+
     stored = dict(_stored(bill), timestamp=_server_timestamp(), updated_at=_server_timestamp())
     _, ref = _bills(uid).add(stored)
     bill["id"] = ref.id
     bill["timestamp"] = _now()
-    log.info("Saved bill %s for user %s (%d issues)", ref.id, uid, bill["issue_count"])
+    if auto:
+        record_vendor(uid, bill)
+    log.info("Saved bill %s for user %s (%d issues, auto_approved=%s, ocr=%dms)",
+             ref.id, uid, bill["issue_count"], auto, ocr_ms)
 
     return jsonify({
         "status": "success",
-        "message": "Bill scanned. Please review it before approving.",
+        "message": ("Bill scanned and approved automatically." if auto
+                    else "Bill scanned. Please review it before approving."),
+        "auto_approved": auto,
         "id": ref.id,
         "bill": detail(bill),
     }), 201
@@ -292,6 +365,7 @@ def approve_bill(bill_id):
     bill["schema_version"] = SCHEMA_VERSION
     bill.setdefault("audit", []).append({"action": "approved", "at": _now(), "by": uid})
     ref.set(dict(_stored(bill), updated_at=_server_timestamp()))
+    record_vendor(uid, bill)
     return jsonify({"bill": detail(bill), "message": "Bill approved."}), 200
 
 
@@ -311,6 +385,89 @@ def delete_bill(bill_id):
     ref.delete()
     log.info("Deleted bill %s for user %s", bill_id, uid)
     return jsonify({"message": "Bill deleted."}), 200
+
+
+# --- vendor master -------------------------------------------------------------------
+
+def _vendor_json(snapshot):
+    data = snapshot.to_dict() or {}
+    data.pop("bill_ids", None)
+    data.pop("name_key", None)
+    return _jsonable(dict(data, id=snapshot.id))
+
+
+@app.route("/vendors", methods=["GET"])
+def list_vendors():
+    uid = get_user_id_from_token(request)
+    if not uid:
+        return _unauthorized()
+    items = [_vendor_json(s) for s in _vendors(uid).stream()]
+    items.sort(key=lambda v: (v.get("name") or "").lower())
+    return jsonify({"vendors": items}), 200
+
+
+@app.route("/vendors", methods=["POST"])
+def create_vendor():
+    uid = get_user_id_from_token(request)
+    if not uid:
+        return _unauthorized()
+    body = request.get_json(silent=True) or {}
+    try:
+        data = vendors.apply_vendor_edits({"blocked": False, "bill_ids": [], "bill_count": 0,
+                                           "first_seen": _now(), "last_seen": None}, body)
+    except ValueError as e:
+        return jsonify({"message": str(e), "field": "gstin"}), 400
+    if not data.get("name"):
+        return jsonify({"message": "Supplier name is required.", "field": "name"}), 400
+    vid = vendors.vendor_id({"supplier_gstin": data.get("gstin"), "supplier_name": data["name"]})
+    ref = _vendors(uid).document(vid)
+    if ref.get().exists:
+        return jsonify({"message": "This supplier is already in your vendor list."}), 409
+    ref.set(data)
+    return jsonify({"vendor": _vendor_json(ref.get())}), 201
+
+
+@app.route("/vendors/<vendor_id>", methods=["PUT"])
+def update_vendor(vendor_id):
+    uid = get_user_id_from_token(request)
+    if not uid:
+        return _unauthorized()
+    ref = _vendors(uid).document(vendor_id)
+    snap = ref.get()
+    if not snap.exists:
+        return jsonify({"message": "Supplier not found."}), 404
+    try:
+        data = vendors.apply_vendor_edits(snap.to_dict(), request.get_json(silent=True) or {})
+    except ValueError as e:
+        return jsonify({"message": str(e), "field": "gstin"}), 400
+    if not data.get("name"):
+        return jsonify({"message": "Supplier name is required.", "field": "name"}), 400
+    ref.set(data)
+    return jsonify({"vendor": _vendor_json(ref.get())}), 200
+
+
+@app.route("/vendors/<vendor_id>", methods=["DELETE"])
+def delete_vendor(vendor_id):
+    uid = get_user_id_from_token(request)
+    if not uid:
+        return _unauthorized()
+    ref = _vendors(uid).document(vendor_id)
+    if not ref.get().exists:
+        return jsonify({"message": "Supplier not found."}), 404
+    ref.delete()
+    return jsonify({"message": "Supplier removed."}), 200
+
+
+# --- quality report ------------------------------------------------------------------
+
+@app.route("/reports/quality", methods=["GET"])
+def quality_report():
+    """Exception rate, corrections and processing time, for the Phase 2 test report."""
+    uid = get_user_id_from_token(request)
+    if not uid:
+        return _unauthorized()
+    bills = [load_bill(s) for s in _bills(uid).stream()]
+    return jsonify({"report": reports.quality_report(bills)}), 200
 
 
 # --- export --------------------------------------------------------------------------

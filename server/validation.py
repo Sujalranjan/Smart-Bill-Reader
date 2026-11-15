@@ -28,7 +28,7 @@ def _money(value):
     return f"₹{value:,.2f}"
 
 
-def validate(bill, duplicate_ids=(), today=None):
+def validate(bill, duplicate_ids=(), today=None, vendor_match=None):
     today = today or date.today()
     header, totals, items = bill["header"], bill["totals"], bill["line_items"]
     issues = []
@@ -119,7 +119,23 @@ def validate(bill, duplicate_ids=(), today=None):
                              "This invoice number from this supplier has already been scanned.", "error")
                       | {"duplicate_of": list(duplicate_ids)})
 
-    # 5. Low OCR confidence
+    # 5. Vendor master list
+    status = (vendor_match or {}).get("status")
+    known = (vendor_match or {}).get("vendor") or {}
+    if status == "blocked":
+        issues.append(_issue("vendor_blocked", "supplier_name",
+                             f"'{known.get('name')}' is blocked in your vendor list.", "error"))
+    elif status == "new":
+        issues.append(_issue("new_vendor", "supplier_name",
+                             "New supplier. It will be added to your vendor list when you approve this bill."))
+    elif status == "name_mismatch":
+        issues.append(_issue("vendor_name_mismatch", "supplier_name",
+                             f"This GSTIN is registered in your vendor list as '{known.get('name')}'."))
+    elif status == "gstin_mismatch":
+        issues.append(_issue("vendor_gstin_mismatch", "supplier_gstin",
+                             f"Your vendor list has GSTIN {known.get('gstin')} for this supplier."))
+
+    # 6. Low OCR confidence
     for field, conf in sorted(bill.get("confidence", {}).items()):
         if conf is not None and conf < LOW_CONFIDENCE:
             issues.append(_issue("low_confidence", field,

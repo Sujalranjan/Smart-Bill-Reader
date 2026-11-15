@@ -386,7 +386,7 @@ export default function ReviewBillScreen() {
             <Text style={styles.sectionTitle}>History</Text>
             {bill.audit.map((a, i) => (
               <Text key={i} style={styles.small}>
-                {a.action === 'scanned' ? 'Scanned' : a.action === 'approved' ? 'Approved' : `Edited (${(a.fields ?? []).map((f) => FIELD_LABELS[f] ?? f).join(', ')})`}
+                {a.action === 'scanned' ? 'Scanned' : a.action === 'approved' ? 'Approved' : a.action === 'auto_approved' ? 'Approved automatically (no problems found, known supplier)' : `Edited (${(a.fields ?? []).map((f) => FIELD_LABELS[f] ?? f).join(', ')})`}
                 {' · '}
                 {new Date(a.at).toLocaleString()}
               </Text>

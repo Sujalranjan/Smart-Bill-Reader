@@ -3,20 +3,23 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { listBills } from '../../lib/api';
-import { formatMoney } from '../../lib/format';
-import type { BillSummary } from '../../lib/types';
+import { getQualityReport, listBills } from '../../lib/api';
+import { formatMoney, formatPercent, ISSUE_LABELS } from '../../lib/format';
+import type { BillSummary, QualityReport } from '../../lib/types';
 
 export default function StatsScreen() {
   const router = useRouter();
   const [data, setData] = useState<BillSummary[] | null>(null);
+  const [quality, setQuality] = useState<QualityReport | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      setData(await listBills());
+      const [bills, report] = await Promise.all([listBills(), getQualityReport()]);
+      setData(bills);
+      setQuality(report);
       setError(null);
     } catch (e: any) {
       setError(e.message ?? 'Analytics unavailable.');
@@ -88,13 +91,59 @@ export default function StatsScreen() {
         </View>
       </View>
 
+      {quality && quality.bills_measured > 0 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Processing quality</Text>
+          <Text style={styles.sectionSub}>Based on {quality.bills_measured} scanned {quality.bills_measured === 1 ? 'bill' : 'bills'}</Text>
+          <View style={styles.metricRow}>
+            <Metric label="Approved automatically" value={formatPercent(quality.straight_through_rate)} />
+            <Metric label="Needed review" value={formatPercent(quality.exception_rate)} />
+            <Metric label="Needed correction" value={formatPercent(quality.manual_correction_rate)} />
+          </View>
+          <Text style={styles.sectionSub}>
+            Average reading time: {quality.processing.avg_ocr_ms === null ? '—' : `${(quality.processing.avg_ocr_ms / 1000).toFixed(1)}s per bill`}
+          </Text>
+          {quality.exception_reasons.length > 0 && (
+            <>
+              <Text style={styles.reasonTitle}>Why bills needed review</Text>
+              {quality.exception_reasons.slice(0, 5).map((r) => (
+                <View key={r.code} style={styles.reasonRow}>
+                  <Text style={styles.reasonText}>{ISSUE_LABELS[r.code] ?? r.code}</Text>
+                  <Text style={styles.reasonCount}>{r.bills}</Text>
+                </View>
+              ))}
+            </>
+          )}
+        </View>
+      )}
+
       {bills.length === 0 && !error && <Text style={styles.empty}>No data yet. Scan a bill!</Text>}
       <View style={{ height: 40 }} />
     </ScrollView>
   );
 }
 
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.metric}>
+      <Text style={styles.metricValue}>{value}</Text>
+      <Text style={styles.metricLabel}>{label}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  section: { backgroundColor: '#FFF', marginHorizontal: 15, padding: 18, borderRadius: 20 },
+  sectionTitle: { fontSize: 17, fontWeight: '800', color: '#111827' },
+  sectionSub: { fontSize: 12, color: '#9CA3AF', marginTop: 4 },
+  metricRow: { flexDirection: 'row', gap: 8, marginTop: 14, marginBottom: 6 },
+  metric: { flex: 1, backgroundColor: '#F9FAFB', borderRadius: 12, padding: 10 },
+  metricValue: { fontSize: 22, fontWeight: '800', color: '#111827' },
+  metricLabel: { fontSize: 11, color: '#6B7280', marginTop: 2 },
+  reasonTitle: { fontSize: 13, fontWeight: '700', color: '#6B7280', marginTop: 14, marginBottom: 4 },
+  reasonRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5 },
+  reasonText: { color: '#374151', fontSize: 14, flex: 1 },
+  reasonCount: { color: '#111827', fontWeight: '700' },
   container: { flex: 1, backgroundColor: '#F3F4F6' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   error: { color: '#B91C1C', margin: 16, textAlign: 'center' },

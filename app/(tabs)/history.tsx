@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Image, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, FlatList, Image, RefreshControl, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { StatusBadge } from '../../components/status-badge';
 import { listBills } from '../../lib/api';
@@ -21,6 +21,7 @@ export default function HistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
+  const [query, setQuery] = useState('');
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -39,10 +40,15 @@ export default function HistoryScreen() {
 
   const visible = useMemo(() => {
     if (!bills) return [];
-    if (filter === 'approved') return bills.filter((b) => b.status === 'approved');
-    if (filter === 'review') return bills.filter((b) => b.status !== 'approved');
-    return bills;
-  }, [bills, filter]);
+    const q = query.trim().toLowerCase();
+    return bills.filter((b) => {
+      if (filter === 'approved' && b.status !== 'approved') return false;
+      if (filter === 'review' && b.status === 'approved') return false;
+      if (!q) return true;
+      return [b.supplier, b.invoice_id, b.invoice_date, b.total?.toString()]
+        .some((v) => (v ?? '').toLowerCase().includes(q));
+    });
+  }, [bills, filter, query]);
 
   const toReview = bills?.filter((b) => b.status !== 'approved').length ?? 0;
 
@@ -56,6 +62,23 @@ export default function HistoryScreen() {
 
   return (
     <View style={styles.container}>
+      <View style={styles.searchBox}>
+        <Ionicons name="search" size={18} color="#9CA3AF" />
+        <TextInput
+          style={styles.searchInput}
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Search supplier, invoice no or amount"
+          placeholderTextColor="#9CA3AF"
+          autoCorrect={false}
+          returnKeyType="search"
+        />
+        {query.length > 0 && (
+          <TouchableOpacity onPress={() => setQuery('')} hitSlop={10} accessibilityLabel="Clear search">
+            <Ionicons name="close-circle" size={18} color="#9CA3AF" />
+          </TouchableOpacity>
+        )}
+      </View>
       <View style={styles.filters}>
         {FILTERS.map((f) => (
           <TouchableOpacity
@@ -86,7 +109,7 @@ export default function HistoryScreen() {
           <View style={styles.center}>
             <Ionicons name="receipt-outline" size={64} color="#D1D5DB" />
             <Text style={styles.emptyText}>
-              {filter === 'review' ? 'Nothing waiting for review' : filter === 'approved' ? 'No approved bills yet' : 'No bills scanned yet'}
+              {query.trim() ? 'No bills match your search' : filter === 'review' ? 'Nothing waiting for review' : filter === 'approved' ? 'No approved bills yet' : 'No bills scanned yet'}
             </Text>
           </View>
         }
@@ -122,6 +145,11 @@ export default function HistoryScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F3F4F6' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
+  searchBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 20, marginTop: 12, paddingHorizontal: 12,
+    backgroundColor: '#FFF', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB',
+  },
+  searchInput: { flex: 1, paddingVertical: 10, fontSize: 15, color: '#111827' },
   filters: { flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingVertical: 12 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999, backgroundColor: '#E5E7EB' },
   chipActive: { backgroundColor: '#4F46E5' },

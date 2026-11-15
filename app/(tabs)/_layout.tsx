@@ -95,7 +95,19 @@ export default function TabLayout() {
         }}
       />
       
-      {/* 3. ANALYTICS TAB */}
+      {/* 3. VENDORS TAB */}
+      <Tabs.Screen
+        name="vendors"
+        options={{
+          title: 'Vendors',
+          tabBarLabel: 'Vendors',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons name={focused ? "business" : "business-outline"} size={26} color={color} />
+          ),
+        }}
+      />
+
+      {/* 4. ANALYTICS TAB */}
       <Tabs.Screen
         name="stats"
         options={{

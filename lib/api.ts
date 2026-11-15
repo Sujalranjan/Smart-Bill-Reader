@@ -2,7 +2,7 @@ import { getAuth } from '@react-native-firebase/auth';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { API_URL } from '../constants/Config';
-import type { Bill, BillSummary } from './types';
+import type { Bill, BillSummary, QualityReport, Vendor } from './types';
 
 export class ApiError extends Error {
   status: number;
@@ -55,7 +55,7 @@ export interface UploadFile {
 export async function scanBill(files: UploadFile[]) {
   const form = new FormData();
   files.forEach((f) => form.append('image', { uri: f.uri, name: f.name, type: f.mimeType } as any));
-  return request<{ id: string; bill: Bill; message: string }>('/scan-bill', { method: 'POST', body: form });
+  return request<{ id: string; bill: Bill; message: string; auto_approved: boolean }>('/scan-bill', { method: 'POST', body: form });
 }
 
 export async function listBills() {
@@ -82,6 +82,36 @@ export async function approveBill(id: string) {
 
 export async function deleteBill(id: string) {
   await request(`/bills/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export type VendorInput = Partial<Pick<Vendor, 'name' | 'gstin' | 'address' | 'phone' | 'email' | 'blocked'>>;
+
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+export async function listVendors() {
+  return (await request<{ vendors: Vendor[] }>('/vendors')).vendors;
+}
+
+export async function createVendor(input: VendorInput) {
+  return (await request<{ vendor: Vendor }>('/vendors', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(input) })).vendor;
+}
+
+export async function updateVendor(id: string, input: VendorInput) {
+  return (
+    await request<{ vendor: Vendor }>(`/vendors/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: JSON_HEADERS,
+      body: JSON.stringify(input),
+    })
+  ).vendor;
+}
+
+export async function deleteVendor(id: string) {
+  await request(`/vendors/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function getQualityReport() {
+  return (await request<{ report: QualityReport }>('/reports/quality')).report;
 }
 
 export type ExportFormat = 'xlsx' | 'csv' | 'json';

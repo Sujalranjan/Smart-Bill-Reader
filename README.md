@@ -1,26 +1,33 @@
 # SmartBill
 
-Mobile app (Expo SDK 54 / React Native 0.81) that scans supplier invoices. A Python server reads them with Google Document AI and validates them. Users review and approve each bill, then export the approved data for accounting.
+Mobile app (Expo SDK 54 / React Native 0.81) that scans supplier invoices. A Python server reads them with Google Document AI and validates them. Standard invoices are approved automatically; the rest are reviewed and approved by a person. Approved data is exported for accounting.
 
 ```
 SmartBillApp/
   app/            Expo Router screens
-    (tabs)/       Scan & export, History, Insights
+    (tabs)/       Scan & export, History, Vendors, Insights
     bill/[id].tsx Review screen: check, correct, approve or delete a bill
     login.tsx     Google sign-in
   components/     Shared UI (status badge, ...)
   lib/            API client, types, formatting helpers
   server/         Flask API: Document AI + Firestore + Cloud Storage (see server/README.md)
+  docs/           User guide, SOP, retention policy proposal
+  firestore.rules, storage.rules   Deny direct client access (see server/README.md)
 ```
 
 ## What the app does
 
 1. **Capture.** Scan with the camera (multi-page bills supported), pick photos, or upload a PDF.
-2. **Review.** Every scan opens the review screen:
+2. **Automatic approval.** A bill with no problems from a supplier already in the vendor list is approved without review.
+3. **Review.** Every other scan opens the review screen:
    - Problems are listed at the top: red must be fixed, amber should be checked, and the matching fields are highlighted.
    - Any field or line item can be corrected, and the original scan can be opened alongside.
-3. **Approve.** Approved bills are marked as such in History. Editing a bill again sends it back for approval.
-4. **Export.** Excel, CSV or JSON, filtered by period (month or Indian financial year), optionally approved bills only. Share it or save it to the device.
+4. **Approve.** Approved bills are marked as such in History, which can be searched and filtered. Editing a bill again sends it back for approval.
+5. **Vendors.** Suppliers are added to the vendor list on approval. They can be edited, added by hand, or blocked.
+6. **Insights.** Spend totals, plus how many bills were auto-approved, needed review (and why) or needed correction.
+7. **Export.** Excel, CSV or JSON, filtered by period (month or Indian financial year), optionally approved bills only. Share it or save it to the device.
+
+For end users, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md) and [docs/SOP.md](docs/SOP.md).
 
 ## Run the app in development
 

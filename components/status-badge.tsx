@@ -1,12 +1,12 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-export function StatusBadge({ bill }: { bill: { status: string; error_count: number; issue_count: number } }) {
+export function StatusBadge({ bill }: { bill: { status: string; error_count: number; issue_count: number; auto_approved?: boolean } }) {
   let label = 'Ready to approve';
   let color = '#2563EB';
   let bg = '#EFF6FF';
   if (bill.status === 'approved') {
-    label = 'Approved';
+    label = bill.auto_approved ? 'Auto-approved' : 'Approved';
     color = '#059669';
     bg = '#ECFDF5';
   } else if (bill.error_count > 0) {

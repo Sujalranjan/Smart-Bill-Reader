@@ -78,7 +78,17 @@ export default function ScanScreen() {
     setBusy(files.length > 1 ? `Reading ${files.length} pages…` : 'Reading your bill…');
     try {
       const result = await scanBill(files);
-      router.push({ pathname: '/bill/[id]', params: { id: result.id } });
+      const open = () => router.push({ pathname: '/bill/[id]', params: { id: result.id } });
+      if (result.auto_approved) {
+        // Standard invoice from a known supplier: nothing to review.
+        Alert.alert(
+          'Approved automatically',
+          `${result.bill.header.supplier_name ?? 'Bill'} · ${result.bill.header.invoice_id ?? ''}\nNo problems were found, so no review is needed.`,
+          [{ text: 'View bill', onPress: open }, { text: 'Scan another', style: 'cancel' }],
+        );
+      } else {
+        open();
+      }
     } catch (e: any) {
       Alert.alert('Could not scan', e.message ?? 'Please try again.');
     } finally {

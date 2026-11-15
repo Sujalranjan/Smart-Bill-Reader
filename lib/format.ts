@@ -28,6 +28,31 @@ export function isoDate(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+export const ISSUE_LABELS: Record<string, string> = {
+  missing_field: 'Missing information',
+  invalid_date: 'Unreadable date',
+  future_date: 'Date in the future',
+  old_date: 'Very old date',
+  invalid_gstin: 'Invalid GSTIN',
+  invalid_amount: 'Invalid amount',
+  unreadable_amount: 'Unreadable amount',
+  tax_mismatch: 'Tax does not add up',
+  totals_mismatch: 'Total does not add up',
+  line_items_mismatch: 'Line items do not match total',
+  line_amount_mismatch: 'Line amount mismatch',
+  no_line_items: 'No line items found',
+  duplicate: 'Duplicate invoice',
+  low_confidence: 'Low reading confidence',
+  new_vendor: 'New supplier',
+  vendor_blocked: 'Blocked supplier',
+  vendor_name_mismatch: 'Supplier name differs from vendor list',
+  vendor_gstin_mismatch: 'GSTIN differs from vendor list',
+};
+
+export function formatPercent(value: number | null | undefined): string {
+  return value === null || value === undefined ? '—' : `${Math.round(value * 100)}%`;
+}
+
 export const FIELD_LABELS: Record<string, string> = {
   invoice_id: 'Invoice No',
   invoice_date: 'Invoice Date',

@@ -48,7 +48,7 @@ export interface LineItem {
 }
 
 export interface AuditEntry {
-  action: 'scanned' | 'edited' | 'approved';
+  action: 'scanned' | 'edited' | 'approved' | 'auto_approved';
   at: string;
   by: string;
   fields?: string[];
@@ -85,8 +85,38 @@ export interface BillSummary {
   issue_count: number;
   error_count: number;
   mime_type: string | null;
+  auto_approved: boolean;
   image: string;
   scanned_at: string | null;
+}
+
+export interface Vendor {
+  id: string;
+  name: string | null;
+  gstin: string | null;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  blocked: boolean;
+  bill_count: number;
+  last_seen: string | null;
+  source: 'auto' | 'manual';
+}
+
+export interface QualityReport {
+  bills_total: number;
+  bills_measured: number;
+  approved: number;
+  auto_approved: number;
+  manually_approved: number;
+  waiting_for_review: number;
+  exception_rate: number | null;
+  straight_through_rate: number | null;
+  blocked_by_error_rate: number | null;
+  manual_correction_rate: number | null;
+  exception_reasons: { code: string; bills: number }[];
+  most_corrected_fields: { field: string; bills: number }[];
+  processing: { pages: number; avg_ocr_ms: number | null; p95_ocr_ms: number | null; max_ocr_ms: number | null };
 }
 
 /** What the edit form holds: everything as text, exactly as the user typed it. */

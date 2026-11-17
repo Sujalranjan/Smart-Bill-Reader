@@ -18,6 +18,7 @@ from werkzeug.exceptions import HTTPException
 import exporters
 import reports
 import services
+import pages as page_images
 import vendors
 from extraction import extract_document
 from normalize import (SCHEMA_VERSION, InvalidValue, apply_edits, bill_from_extraction,
@@ -176,9 +177,44 @@ def summary(bill, with_image=True):
     }
 
 
+def page_views(bill, image_url):
+    """Images of each page for the review screen, as short-lived links.
+
+    Bills scanned before page images existed fall back to the original file when it is
+    a photo; for older PDFs the list is empty and the app offers to open the PDF instead.
+    """
+    stored = bill.get("pages") or []
+    if stored:
+        return [{"url": services.signed_url(p["path"], APP_IMAGE_LINK_HOURS),
+                 "width": p.get("width"), "height": p.get("height")} for p in stored]
+    if (bill.get("mime_type") or "").startswith("image/") and image_url:
+        return [{"url": image_url, "width": None, "height": None}]
+    return []
+
+
+def store_page_images(uid, blob_path, content, mime_type):
+    """Save displayable page images next to the original. Never fails the scan."""
+    try:
+        if mime_type in page_images.DISPLAYABLE:
+            width, height = page_images.image_size(content)
+            return [{"path": blob_path, "width": width, "height": height}]
+        stored = []
+        stem = blob_path.rsplit(".", 1)[0]
+        for n, page in enumerate(page_images.render_pages(content, mime_type), 1):
+            path = f"{stem}-p{n}.jpg"
+            services.bucket().blob(path).upload_from_string(page.data, content_type="image/jpeg")
+            stored.append({"path": path, "width": page.width, "height": page.height})
+        return stored
+    except Exception:
+        log.exception("Could not create page images for %s", blob_path)
+        return []
+
+
 def detail(bill):
-    out = {k: v for k, v in bill.items() if k not in ("raw", "dup_key", "audit")}
+    out = {k: v for k, v in bill.items() if k not in ("raw", "dup_key", "audit", "pages")}
     out["image_url"] = services.signed_url(bill.get("image_path"), APP_IMAGE_LINK_HOURS)
+    out["pages"] = page_views(bill, out["image_url"])
+    out["locations"] = bill.get("locations") or {}
     out["audit"] = bill.get("audit", [])
     return _jsonable(out)
 
@@ -252,12 +288,14 @@ def scan_bill():
 
     blob_path = f"bills/{uid}/{uuid.uuid4()}.{EXTENSIONS[mime_type]}"
     services.bucket().blob(blob_path).upload_from_string(content, content_type=mime_type)
+    stored_pages = store_page_images(uid, blob_path, content, mime_type)
 
     bill.update({
         "file_name": file_name,
         "mime_type": mime_type,
         "page_count": pages or extracted["page_count"],
         "image_path": blob_path,
+        "pages": stored_pages,
         "status": "draft",
         "audit": [{"action": "scanned", "at": _now(), "by": uid}],
     })
@@ -377,11 +415,12 @@ def delete_bill(bill_id):
     ref, bill = _get_owned_bill(uid, bill_id)
     if bill is None:
         return jsonify({"message": "Bill not found."}), 404
-    if bill.get("image_path"):
+    paths = {bill.get("image_path")} | {p.get("path") for p in bill.get("pages") or []}
+    for path in sorted(p for p in paths if p):
         try:
-            services.bucket().blob(bill["image_path"]).delete()
+            services.bucket().blob(path).delete()
         except Exception:
-            log.warning("Could not delete file %s", bill["image_path"])
+            log.warning("Could not delete file %s", path)
     ref.delete()
     log.info("Deleted bill %s for user %s", bill_id, uid)
     return jsonify({"message": "Bill deleted."}), 200

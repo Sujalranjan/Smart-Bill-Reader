@@ -192,19 +192,44 @@ def normalize_header_value(field, value):
     return clean_text(value)
 
 
+def clean_location(value):
+    """Keep a field position only if it is well formed: {"page": int >= 0, "box": [x0, y0, x1, y1]} in 0..1."""
+    if not isinstance(value, dict):
+        return None
+    page, box = value.get("page"), value.get("box")
+    if not isinstance(page, int) or isinstance(page, bool) or page < 0:
+        return None
+    if not isinstance(box, (list, tuple)) or len(box) != 4:
+        return None
+    try:
+        x0, y0, x1, y1 = (float(v) for v in box)
+    except (TypeError, ValueError):
+        return None
+    if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+        return None
+    return {"page": page, "box": [x0, y0, x1, y1]}
+
+
+def line_is_empty(line):
+    return all(line.get(f) is None for f in LINE_FIELDS)
+
+
 def normalize_line_item(item):
     out = {}
     for field in LINE_TEXT_FIELDS:
         out[field] = clean_text(item.get(field))
     for field in LINE_NUMBER_FIELDS:
         out[field] = parse_number(item.get(field))
+    location = clean_location(item.get("location"))
+    if location:
+        out["location"] = location  # where this row was read on the bill
     return out
 
 
 def bill_from_extraction(extracted):
     """`extracted` is the output of extraction.extract_document()."""
     entities = extracted.get("entities", {})
-    header, totals, confidence, raw = {}, {}, {}, {}
+    header, totals, confidence, raw, locations = {}, {}, {}, {}, {}
 
     for field, aliases in HEADER_ALIASES.items():
         entity = _pick(entities, aliases)
@@ -212,6 +237,7 @@ def bill_from_extraction(extracted):
         if entity:
             raw[field] = entity["text"]
             confidence[field] = entity.get("confidence")
+            locations[field] = clean_location(entity.get("location"))
             value = entity.get("normalized") if field in DATE_FIELDS and entity.get("normalized") else entity["text"]
             header[field] = normalize_header_value(field, value)
 
@@ -221,6 +247,7 @@ def bill_from_extraction(extracted):
         if entity:
             raw[field] = entity["text"]
             confidence[field] = entity.get("confidence")
+            locations[field] = clean_location(entity.get("location"))
             normalized = entity.get("normalized")
             totals[field] = normalized if isinstance(normalized, (int, float)) else parse_number(entity["text"])
 
@@ -229,12 +256,13 @@ def bill_from_extraction(extracted):
         item = {}
         for field, aliases in LINE_ALIASES.items():
             item[field] = next((raw_item[a] for a in aliases if raw_item.get(a)), None)
+        item["location"] = raw_item.get("_location")
         line = normalize_line_item(item)
         # A single "GST %" column is split evenly into CGST and SGST.
         gst = parse_number(raw_item.get("gst"))
         if line["cgst_pct"] is None and line["sgst_pct"] is None and gst is not None:
             line["cgst_pct"] = line["sgst_pct"] = round(gst / 2, 4)
-        if any(v is not None for v in line.values()):
+        if not line_is_empty(line):
             line_items.append(line)
 
     if totals["total_tax"] is None:
@@ -249,6 +277,8 @@ def bill_from_extraction(extracted):
         "line_items": line_items,
         "confidence": {k: v for k, v in confidence.items() if v is not None},
         "raw": raw,
+        # where each header/total value was read on the bill, for highlighting in the review screen
+        "locations": {k: v for k, v in locations.items() if v},
     }
 
 
@@ -335,7 +365,7 @@ def apply_edits(bill, edits):
                 if parse_number(value) is None and clean_text(value):
                     raise InvalidValue(f"line_items[{i}].{field}", f"Line {i + 1}: '{value}' is not a valid number.")
             line = normalize_line_item(item)
-            if any(v is not None for v in line.values()):
+            if not line_is_empty(line):
                 new_items.append(line)
         if new_items != bill["line_items"]:
             bill["line_items"] = new_items

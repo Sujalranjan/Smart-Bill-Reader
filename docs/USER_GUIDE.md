@@ -40,9 +40,13 @@ The app checks every bill automatically. There are two outcomes:
 
 ## 3. Review a bill
 
-The review screen shows the original scan, a list of things to check, and all the extracted details.
+The review screen shows the bill and the details read from it together, so you can compare them. On a phone the bill is at the top and the details below; on a tablet or in landscape they sit side by side.
 
-- Tap the picture at the top to see the original bill full screen. For PDFs it opens the file.
+- **Tap any field** (or any problem in the "Please check" list). The bill zooms to where that value was printed and outlines it, and the value read is shown above the bill. Compare the two.
+- **Pinch** to zoom, **drag** to move around, **double-tap** to zoom in or back out. **Whole page** shows the full page again.
+- Multi-page bills: use the arrows at the bottom of the bill to change page. The right page opens by itself when you tap a field.
+- The button at the top right of the bill makes it bigger or smaller.
+- If a value's position isn't known (for example a line you added yourself), the bill doesn't move. Find it on the page by hand.
 - **Red** items must be fixed before the bill can be approved.
 - **Amber** items should be checked. If the value is right, you can approve anyway.
 - Fields with a problem are outlined in the same colour.

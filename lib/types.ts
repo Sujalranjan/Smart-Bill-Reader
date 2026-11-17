@@ -10,6 +10,19 @@ export interface Issue {
   duplicate_of?: string[];
 }
 
+/** Where a value was read on the bill: page index (0-based) and box [x0, y0, x1, y1] as fractions of the page. */
+export interface FieldLocation {
+  page: number;
+  box: [number, number, number, number];
+}
+
+/** One page of the bill as an image the app can show. Width/height are null for older bills. */
+export interface BillPage {
+  url: string;
+  width: number | null;
+  height: number | null;
+}
+
 export interface BillHeader {
   invoice_id: string | null;
   invoice_date: string | null;
@@ -45,6 +58,7 @@ export interface LineItem {
   sgst_pct: number | null;
   sgst_amount: number | null;
   amount: number | null;
+  location?: FieldLocation | null;
 }
 
 export interface AuditEntry {
@@ -69,6 +83,8 @@ export interface Bill {
   mime_type: string | null;
   page_count?: number;
   image_url: string;
+  pages: BillPage[];
+  locations: Record<string, FieldLocation>;
   timestamp?: string;
   approved_at?: string;
   audit: AuditEntry[];
@@ -120,4 +136,4 @@ export interface QualityReport {
 }
 
 /** What the edit form holds: everything as text, exactly as the user typed it. */
-export type EditableLine = Record<keyof LineItem, string>;
+export type EditableLine = Record<Exclude<keyof LineItem, 'location'>, string>;

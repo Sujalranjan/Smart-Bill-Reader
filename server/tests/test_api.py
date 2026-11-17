@@ -98,9 +98,15 @@ def test_multi_page_photos_and_not_a_bill(fake_cloud):
     assert body["mime_type"] == "application/pdf" and body["page_count"] == 2
     assert body["file_name"] == "2-page scan.pdf"
 
+    # the merged PDF plus one rendered image per page for the review screen
+    assert len(body["pages"]) == 2
+    assert all(p["url"].endswith(f"-p{n}.jpg") and p["width"] and p["height"] for n, p in enumerate(body["pages"], 1))
+    stored = set(fake_cloud["bucket"].files)
+    assert len(stored) == 3
+
     r = _scan(c, fake_cloud, fields={"supplier_phone": "123"}, items=[])
     assert r.status_code == 422
-    assert len(fake_cloud["bucket"].files) == 1  # nothing stored for the rejected upload
+    assert set(fake_cloud["bucket"].files) == stored  # nothing stored for the rejected upload
 
 
 def test_unsupported_upload(fake_cloud):

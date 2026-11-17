@@ -2,17 +2,27 @@
 from google.cloud import documentai
 
 
+def page_box(page, box):
+    x0, y0, x1, y1 = box
+    vertices = [documentai.NormalizedVertex(x=x, y=y) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+    return documentai.Document.PageAnchor(page_refs=[documentai.Document.PageAnchor.PageRef(
+        page=page, bounding_poly=documentai.BoundingPoly(normalized_vertices=vertices))])
+
+
 def make_document(fields, line_items=(), pages=1):
     """fields: {type: text or (text, confidence)}; line_items: [{prop: text}]."""
     text_parts, entities = [], []
 
     def anchored(etype, value, confidence=0.95):
+        # Each value gets its own row on page 1: x 0.1-0.6, height 0.02, stacked downwards.
         start = sum(len(p) for p in text_parts)
+        y0 = round(0.02 + len(text_parts) * 0.025, 4)
         text_parts.append(value + "\n")
         return documentai.Document.Entity(
             type_=etype, confidence=confidence, mention_text=value,
             text_anchor=documentai.Document.TextAnchor(
                 text_segments=[documentai.Document.TextAnchor.TextSegment(start_index=start, end_index=start + len(value))]),
+            page_anchor=page_box(0, [0.1, y0, 0.6, round(y0 + 0.02, 4)]),
         )
 
     for etype, value in fields.items():

@@ -4,24 +4,22 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
-  Image,
   KeyboardAvoidingView,
-  Linking,
-  Modal,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
+import { BillViewer } from '../../components/bill-viewer';
 import { StatusBadge } from '../../components/status-badge';
 import { ApiError, approveBill, deleteBill, getBill, updateBill } from '../../lib/api';
 import { FIELD_LABELS, formatDate, formatMoney, numberToInput, toInputDate } from '../../lib/format';
-import type { Bill, BillHeader, BillTotals, EditableLine, Issue, LineItem } from '../../lib/types';
+import type { Bill, BillHeader, BillTotals, EditableLine, FieldLocation, Issue, LineItem } from '../../lib/types';
 
 const HEADER_SECTIONS: { title: string; fields: (keyof BillHeader)[] }[] = [
   { title: 'Invoice', fields: ['invoice_id', 'invoice_date', 'due_date', 'purchase_order', 'payment_terms'] },
@@ -29,7 +27,7 @@ const HEADER_SECTIONS: { title: string; fields: (keyof BillHeader)[] }[] = [
   { title: 'Buyer', fields: ['buyer_name', 'buyer_gstin'] },
 ];
 const TOTAL_FIELDS: (keyof BillTotals)[] = ['sub_total', 'cgst_amount', 'sgst_amount', 'igst_amount', 'total_tax', 'total_amount'];
-const LINE_NUMBER_FIELDS: { key: keyof LineItem; label: string }[] = [
+const LINE_NUMBER_FIELDS: { key: Exclude<keyof LineItem, 'location' | 'description' | 'hsn_sac'>; label: string }[] = [
   { key: 'quantity', label: 'Qty' },
   { key: 'rate', label: 'Rate' },
   { key: 'discount_pct', label: 'Disc %' },
@@ -46,7 +44,11 @@ type Form = {
   header: Record<keyof BillHeader, string>;
   totals: Record<keyof BillTotals, string>;
   lines: EditableLine[];
+  /** Position of each line on the bill, kept in step with `lines` when rows are added or removed. */
+  lineLocations: (FieldLocation | null)[];
 };
+
+const WIDE_LAYOUT = 760; // px; tablets and landscape show the bill and the fields side by side
 
 function toForm(bill: Bill): Form {
   const header = {} as Form['header'];
@@ -57,13 +59,20 @@ function toForm(bill: Bill): Form {
   TOTAL_FIELDS.forEach((k) => (totals[k] = numberToInput(bill.totals[k])));
   const lines = bill.line_items.map((item) => {
     const line = { ...EMPTY_LINE };
-    (Object.keys(EMPTY_LINE) as (keyof LineItem)[]).forEach((k) => {
+    (Object.keys(EMPTY_LINE) as (keyof EditableLine)[]).forEach((k) => {
       const v = item[k];
       line[k] = typeof v === 'number' ? numberToInput(v) : v ?? '';
     });
     return line;
   });
-  return { header, totals, lines };
+  const lineLocations = bill.line_items.map((item) => item.location ?? null);
+  return { header, totals, lines, lineLocations };
+}
+
+/** "line_items[2].amount" -> 2 */
+function lineIndexOf(field: string): number | null {
+  const m = /^line_items\[(\d+)\]/.exec(field);
+  return m ? Number(m[1]) : null;
 }
 
 function toNumber(text: string): number {
@@ -82,7 +91,10 @@ export default function ReviewBillScreen() {
   const [busy, setBusy] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [badField, setBadField] = useState<string | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [activeField, setActiveField] = useState<string | null>(null);
+  const [bigViewer, setBigViewer] = useState(false);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const wide = windowWidth >= WIDE_LAYOUT;
   const leavingRef = useRef(false);
 
   const applyBill = useCallback((b: Bill) => {
@@ -126,6 +138,13 @@ export default function ReviewBillScreen() {
     return map;
   }, [bill]);
 
+  const highlight = useMemo<FieldLocation | null>(() => {
+    if (!activeField || !bill || !form) return null;
+    const line = lineIndexOf(activeField);
+    if (line !== null) return form.lineLocations[line] ?? null;
+    return bill.locations?.[activeField] ?? null;
+  }, [activeField, bill, form]);
+
   const lineSum = useMemo(
     () => (form ? form.lines.reduce((sum, l) => sum + toNumber(l.amount), 0) : 0),
     [form],
@@ -153,14 +172,36 @@ export default function ReviewBillScreen() {
   const edit = (mutate: (f: Form) => void) => {
     setForm((prev) => {
       if (!prev) return prev;
-      const next: Form = { header: { ...prev.header }, totals: { ...prev.totals }, lines: prev.lines.map((l) => ({ ...l })) };
+      const next: Form = {
+        header: { ...prev.header },
+        totals: { ...prev.totals },
+        lines: prev.lines.map((l) => ({ ...l })),
+        lineLocations: [...prev.lineLocations],
+      };
       mutate(next);
       return next;
     });
     setDirty(true);
   };
 
-  const payload = () => ({ header: form.header, totals: form.totals, line_items: form.lines });
+  const payload = () => ({
+    header: form.header,
+    totals: form.totals,
+    line_items: form.lines.map((line, i) => ({ ...line, location: form.lineLocations[i] })),
+  });
+
+  /** Label and current value of the field being checked, shown over the bill. */
+  const activeCaption = (() => {
+    if (!activeField) return null;
+    const line = lineIndexOf(activeField);
+    if (line !== null) {
+      const row = form.lines[line];
+      if (!row) return null;
+      return `Line ${line + 1}: ${row.description || '—'} · ${row.amount ? formatMoney(toNumber(row.amount)) : '—'}`;
+    }
+    const value = (form.header as Record<string, string>)[activeField] ?? (form.totals as Record<string, string>)[activeField];
+    return `${FIELD_LABELS[activeField] ?? activeField}: ${value || '—'}`;
+  })();
 
   const handleError = (e: any) => {
     if (e instanceof ApiError && e.bill) applyBill(e.bill);
@@ -223,7 +264,6 @@ export default function ReviewBillScreen() {
     return null;
   };
 
-  const isImage = (bill.mime_type ?? '').startsWith('image/');
   const errors = bill.issues.filter((i) => i.severity === 'error');
   const warnings = bill.issues.filter((i) => i.severity === 'warning');
   const total = toNumber(form.totals.total_amount);
@@ -233,22 +273,34 @@ export default function ReviewBillScreen() {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>
-      <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
-        {/* Status + original document */}
-        <View style={styles.topCard}>
+      <View style={[styles.layout, wide && styles.layoutWide]}>
+      {/* The bill, for comparing with the values below */}
+      <View style={wide ? styles.viewerWide : { height: Math.round(windowHeight * (bigViewer ? 0.62 : 0.36)) }}>
+        <BillViewer pages={bill.pages ?? []} highlight={highlight} originalUrl={bill.image_url} />
+        {activeCaption && (
+          <View style={styles.caption} pointerEvents="none">
+            <Text style={styles.captionText} numberOfLines={1}>{activeCaption}</Text>
+            {!highlight && <Text style={styles.captionHint}>Position on the bill not available for this value</Text>}
+          </View>
+        )}
+        {!wide && (
           <TouchableOpacity
-            onPress={() => (isImage ? setPreviewOpen(true) : bill.image_url && Linking.openURL(bill.image_url))}
-            style={styles.thumbWrap}
+            style={styles.resizeButton}
+            onPress={() => setBigViewer((v) => !v)}
+            accessibilityLabel={bigViewer ? 'Make the bill smaller' : 'Make the bill bigger'}
           >
-            {isImage && bill.image_url ? (
-              <Image source={{ uri: bill.image_url }} style={styles.thumb} />
-            ) : (
-              <View style={[styles.thumb, styles.pdfThumb]}>
-                <Ionicons name="document-text" size={32} color="#DC2626" />
-                <Text style={styles.pdfLabel}>PDF</Text>
-              </View>
-            )}
+            <Ionicons name={bigViewer ? 'contract-outline' : 'expand-outline'} size={18} color="#FFF" />
           </TouchableOpacity>
+        )}
+      </View>
+
+      <ScrollView
+        style={[styles.container, wide && styles.fieldsWide]}
+        contentContainerStyle={{ paddingBottom: 120 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Summary */}
+        <View style={styles.topCard}>
           <View style={{ flex: 1 }}>
             <StatusBadge bill={bill} />
             <Text style={styles.topTitle} numberOfLines={2}>{bill.header.supplier_name || 'Unknown supplier'}</Text>
@@ -256,8 +308,9 @@ export default function ReviewBillScreen() {
               {formatDate(bill.header.invoice_date)} · {formatMoney(bill.totals.total_amount)}
             </Text>
             <Text style={styles.small}>
-              {bill.file_name ?? 'Scan'}{bill.page_count && bill.page_count > 1 ? ` · ${bill.page_count} pages` : ''} · tap to view original
+              {bill.file_name ?? 'Scan'}{bill.page_count && bill.page_count > 1 ? ` · ${bill.page_count} pages` : ''}
             </Text>
+            <Text style={styles.hint}>Tap a field to see where it is on the bill. Pinch the bill to zoom.</Text>
           </View>
         </View>
 
@@ -266,7 +319,7 @@ export default function ReviewBillScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Please check</Text>
             {[...errors, ...warnings].map((issue, i) => (
-              <View key={i} style={styles.issueRow}>
+              <TouchableOpacity key={i} style={styles.issueRow} onPress={() => setActiveField(issue.field)}>
                 <Ionicons
                   name={issue.severity === 'error' ? 'close-circle' : 'alert-circle'}
                   size={18}
@@ -277,7 +330,8 @@ export default function ReviewBillScreen() {
                     ? `${FIELD_LABELS[issue.field]}: ` : ''}
                   {issue.message}
                 </Text>
-              </View>
+                <Ionicons name="locate-outline" size={16} color="#9CA3AF" />
+              </TouchableOpacity>
             ))}
             {errors.length > 0 && <Text style={styles.small}>Red items must be fixed before the bill can be approved.</Text>}
           </View>
@@ -293,12 +347,13 @@ export default function ReviewBillScreen() {
                   {key.endsWith('date') ? ' (DD/MM/YYYY)' : ''}
                 </Text>
                 <TextInput
-                  style={[styles.input, fieldStyle(key), key === 'supplier_address' && { minHeight: 60 }]}
+                  style={[styles.input, fieldStyle(key), activeField === key && styles.inputActive, key === 'supplier_address' && { minHeight: 60 }]}
                   value={form.header[key]}
                   multiline={key === 'supplier_address'}
                   autoCapitalize={key.endsWith('gstin') ? 'characters' : 'sentences'}
                   keyboardType={key === 'supplier_email' ? 'email-address' : key === 'supplier_phone' ? 'phone-pad' : 'default'}
                   onChangeText={(t) => edit((f) => { f.header[key] = t; })}
+                  onFocus={() => setActiveField(key)}
                   placeholder="—"
                   placeholderTextColor="#D1D5DB"
                 />
@@ -316,11 +371,21 @@ export default function ReviewBillScreen() {
             </Text>
           </View>
           {form.lines.map((line, index) => (
-            <View key={index} style={[styles.lineCard, issuesByField[`line_items[${index}].amount`] && styles.inputWarning]}>
+            <View
+              key={index}
+              style={[
+                styles.lineCard,
+                issuesByField[`line_items[${index}].amount`] && styles.inputWarning,
+                lineIndexOf(activeField ?? '') === index && styles.lineActive,
+              ]}
+            >
               <View style={styles.rowBetween}>
                 <Text style={styles.lineNo}>#{index + 1}</Text>
                 <TouchableOpacity
-                  onPress={() => edit((f) => { f.lines.splice(index, 1); })}
+                  onPress={() => {
+                    edit((f) => { f.lines.splice(index, 1); f.lineLocations.splice(index, 1); });
+                    setActiveField(null);
+                  }}
                   hitSlop={10}
                   accessibilityLabel={`Remove line ${index + 1}`}
                 >
@@ -333,6 +398,7 @@ export default function ReviewBillScreen() {
                 placeholder="Product name"
                 placeholderTextColor="#D1D5DB"
                 onChangeText={(t) => edit((f) => { f.lines[index].description = t; })}
+                onFocus={() => setActiveField(`line_items[${index}].description`)}
               />
               <View style={styles.grid}>
                 <View style={styles.gridCell}>
@@ -341,6 +407,7 @@ export default function ReviewBillScreen() {
                     style={styles.input}
                     value={line.hsn_sac}
                     onChangeText={(t) => edit((f) => { f.lines[index].hsn_sac = t; })}
+                    onFocus={() => setActiveField(`line_items[${index}].hsn_sac`)}
                   />
                 </View>
                 {LINE_NUMBER_FIELDS.map(({ key, label }) => (
@@ -351,13 +418,14 @@ export default function ReviewBillScreen() {
                       value={line[key]}
                       keyboardType="decimal-pad"
                       onChangeText={(t) => edit((f) => { f.lines[index][key] = t; })}
+                      onFocus={() => setActiveField(`line_items[${index}].${key}`)}
                     />
                   </View>
                 ))}
               </View>
             </View>
           ))}
-          <TouchableOpacity style={[styles.button, styles.secondary]} onPress={() => edit((f) => { f.lines.push({ ...EMPTY_LINE }); })}>
+          <TouchableOpacity style={[styles.button, styles.secondary]} onPress={() => edit((f) => { f.lines.push({ ...EMPTY_LINE }); f.lineLocations.push(null); })}>
             <Ionicons name="add" size={18} color="#4F46E5" />
             <Text style={styles.secondaryText}>Add line</Text>
           </TouchableOpacity>
@@ -370,8 +438,9 @@ export default function ReviewBillScreen() {
             <View key={key} style={[styles.field, styles.rowBetween]}>
               <Text style={[styles.label, { flex: 1 }, key === 'total_amount' && styles.totalLabel]}>{FIELD_LABELS[key]}</Text>
               <TextInput
-                style={[styles.input, styles.amountInput, fieldStyle(key)]}
+                style={[styles.input, styles.amountInput, fieldStyle(key), activeField === key && styles.inputActive]}
                 value={form.totals[key]}
+                onFocus={() => setActiveField(key)}
                 keyboardType="decimal-pad"
                 placeholder="—"
                 placeholderTextColor="#D1D5DB"
@@ -399,6 +468,7 @@ export default function ReviewBillScreen() {
           <Text style={{ color: '#DC2626', fontWeight: '600' }}>Delete this bill</Text>
         </TouchableOpacity>
       </ScrollView>
+      </View>
 
       {/* Action bar */}
       <View style={styles.actionBar}>
@@ -424,12 +494,6 @@ export default function ReviewBillScreen() {
         </TouchableOpacity>
       </View>
 
-      <Modal visible={previewOpen} transparent animationType="fade" onRequestClose={() => setPreviewOpen(false)}>
-        <Pressable style={styles.previewBackdrop} onPress={() => setPreviewOpen(false)}>
-          <Image source={{ uri: bill.image_url }} style={styles.previewImage} resizeMode="contain" />
-          <Text style={{ color: '#FFF', marginTop: 12 }}>Tap anywhere to close</Text>
-        </Pressable>
-      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -437,11 +501,22 @@ export default function ReviewBillScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F3F4F6' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, gap: 8 },
+  layout: { flex: 1, backgroundColor: '#F3F4F6' },
+  layoutWide: { flexDirection: 'row' },
+  viewerWide: { flex: 1, marginBottom: 76 }, // clear of the action bar
+  fieldsWide: { flex: 0, width: 440, borderLeftWidth: 1, borderLeftColor: '#E5E7EB' },
+  caption: {
+    position: 'absolute', top: 8, left: 8, right: 52, paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 10, backgroundColor: 'rgba(17, 24, 39, 0.8)',
+  },
+  captionText: { color: '#FFF', fontSize: 13, fontWeight: '700' },
+  captionHint: { color: '#FCD34D', fontSize: 11, marginTop: 2 },
+  resizeButton: {
+    position: 'absolute', top: 8, right: 8, width: 36, height: 36, borderRadius: 18,
+    backgroundColor: 'rgba(17, 24, 39, 0.75)', justifyContent: 'center', alignItems: 'center',
+  },
+  hint: { color: '#6366F1', fontSize: 12, marginTop: 6 },
   topCard: { flexDirection: 'row', gap: 14, backgroundColor: '#FFF', margin: 16, marginBottom: 0, padding: 14, borderRadius: 16 },
-  thumbWrap: { borderRadius: 12, overflow: 'hidden' },
-  thumb: { width: 84, height: 108, borderRadius: 12, backgroundColor: '#E5E7EB' },
-  pdfThumb: { justifyContent: 'center', alignItems: 'center', backgroundColor: '#FEF2F2' },
-  pdfLabel: { color: '#DC2626', fontWeight: '800', marginTop: 4 },
   topTitle: { fontSize: 18, fontWeight: '800', color: '#111827', marginTop: 6 },
   muted: { color: '#6B7280', fontSize: 14, marginTop: 2, textAlign: 'left' },
   small: { color: '#9CA3AF', fontSize: 12, marginTop: 4 },
@@ -459,6 +534,8 @@ const styles = StyleSheet.create({
   amountInput: { width: 150, textAlign: 'right' },
   inputError: { borderColor: '#DC2626', backgroundColor: '#FEF2F2' },
   inputWarning: { borderColor: '#F59E0B', backgroundColor: '#FFFBEB' },
+  inputActive: { borderColor: '#4F46E5', borderWidth: 2 },
+  lineActive: { borderColor: '#4F46E5', borderWidth: 2 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   lineCard: { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 10, marginBottom: 10, gap: 8 },
   lineNo: { fontWeight: '700', color: '#6B7280' },
@@ -475,6 +552,4 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'ios' ? 30 : 14, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#E5E7EB',
   },
   deleteLink: { flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', marginTop: 24 },
-  previewBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center' },
-  previewImage: { width: '100%', height: '85%' },
 });

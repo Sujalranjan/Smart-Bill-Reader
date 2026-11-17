@@ -66,7 +66,8 @@ def to_csv(bills):
 def to_json(bills):
     payload = [{
         "id": b["id"], "status": b.get("status"), "header": b["header"], "totals": b["totals"],
-        "line_items": b["line_items"], "file_name": b.get("file_name"), "image_url": b.get("image_url"),
+        "line_items": [{f: item.get(f) for f in LINE_FIELDS} for item in b["line_items"]],
+        "file_name": b.get("file_name"), "image_url": b.get("image_url"),
     } for b in bills]
     return json.dumps({"bills": payload}, ensure_ascii=False, indent=2).encode("utf-8")
 

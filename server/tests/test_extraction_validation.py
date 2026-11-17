@@ -94,5 +94,6 @@ def test_multiple_descriptions_in_one_line_item_entity_become_rows():
         prop("line_item/description", 0, 4), prop("line_item/description", 5, 9),
         prop("line_item/amount", 10, 12), prop("line_item/amount", 13, 15)])])
     out = extract_document(doc)
-    assert out["line_items"] == [{"description": "Milk", "amount": "50"}, {"description": "Curd", "amount": "30"}]
+    assert out["line_items"] == [{"description": "Milk", "amount": "50", "_location": None},
+                                 {"description": "Curd", "amount": "30", "_location": None}]
     assert out["page_count"] == 1

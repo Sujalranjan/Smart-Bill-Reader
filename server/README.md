@@ -23,7 +23,7 @@ A Flask API that the mobile app calls. It:
 | --- | --- |
 | `POST /scan-bill` | multipart field `image`: one JPEG/PNG/TIFF/WEBP/PDF, or up to 10 photos (pages of one bill, merged into a PDF). Max 25 MB. Returns the new bill. |
 | `GET /bills` | the user's bills (summary), newest first |
-| `GET /bills/<id>` | full bill with issues, audit log and a 1-hour link to the original file |
+| `GET /bills/<id>` | full bill with issues, audit log, a 1-hour link to the original file, `pages` (an image per page, 1-hour links) and `locations` (where each value was read: page and box as fractions of the page) |
 | `PUT /bills/<id>` | save corrections: `{"header": {...}, "totals": {...}, "line_items": [...]}` |
 | `POST /bills/<id>/approve` | approve; `409` with the issues if errors remain |
 | `DELETE /bills/<id>` | delete the bill and its file |
@@ -33,6 +33,8 @@ A Flask API that the mobile app calls. It:
 | `GET /export?format=xlsx\|csv\|json&status=all\|approved&from=YYYY-MM-DD&to=YYYY-MM-DD` | export |
 | `GET /healthz` | health check |
 | `GET /get-history`, `GET /export-bills` | kept for app builds released before the review workflow |
+
+For the side-by-side review screen, the server keeps the position of each value on the bill (from Document AI) and an image of every page. Photos are shown as uploaded; PDFs, TIFF and WEBP are rendered to one JPEG per page at 150 dpi (`pages.py`) and stored next to the original. Line items carry their own `location`, which the app sends back when saving, so positions survive edits. Bills scanned before this have no positions; photo bills fall back to the original image.
 
 Bills saved by the first server version (flat OCR strings) are converted when they're read. They're stored in the new format the first time they are edited or approved.
 
